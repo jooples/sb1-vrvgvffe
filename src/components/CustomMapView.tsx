@@ -7,6 +7,7 @@ interface CustomMapViewProps {
     position: [number, number];
     popup?: string;
     isSelected?: boolean;
+    status?: 'filled' | 'partial' | 'needs';
   }>;
   onClick?: (position: [number, number]) => void;
   className?: string;
@@ -86,11 +87,24 @@ export function CustomMapView({ imageUrl, markers = [], onClick, className = '' 
         try {
           const markerElement = document.createElement('div');
           markerElement.className = `custom-marker ${marker.isSelected ? 'selected' : ''}`;
+          
+          // Determine marker color based on status
+          let markerColor = '#3b82f6'; // Default blue
+          if (marker.isSelected) {
+            markerColor = '#ef4444'; // Red for selected
+          } else if (marker.status === 'filled') {
+            markerColor = '#10b981'; // Green for filled
+          } else if (marker.status === 'partial') {
+            markerColor = '#f59e0b'; // Yellow for partial
+          } else if (marker.status === 'needs') {
+            markerColor = '#ef4444'; // Red for needs volunteers
+          }
+          
           markerElement.innerHTML = `
             <div class="marker-icon">
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                 <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" 
-                  fill="${marker.isSelected ? '#ef4444' : '#3b82f6'}"/>
+                  fill="${markerColor}"/>
               </svg>
             </div>
           `;

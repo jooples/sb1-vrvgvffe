@@ -313,6 +313,73 @@ export function EventsOverviewPage() {
     ? events.find(e => e.id === selectedEventId) 
     : null;
 
+  // Convert real-world coordinates to image coordinates for custom maps
+  const convertRealWorldToImage = (realWorldPos: [number, number], _eventId?: string): [number, number] => {
+    try {
+      // This is a simplified conversion - in a real app, you'd need proper coordinate mapping
+      // For now, we'll use a basic conversion that assumes the image represents a small area
+      // You could extend this to use event-specific coordinate mappings stored in the database
+      
+      if (!Array.isArray(realWorldPos) || realWorldPos.length !== 2 || 
+          typeof realWorldPos[0] !== 'number' || typeof realWorldPos[1] !== 'number' ||
+          isNaN(realWorldPos[0]) || isNaN(realWorldPos[1])) {
+        throw new Error('Invalid real world coordinates');
+      }
+
+      // Default coordinate system - you can customize this per event
+      const baseLat = 40.7128; // Example: New York City latitude
+      const baseLng = -74.0060; // Example: New York City longitude
+      const scale = 0.01; // Scale factor for conversion
+      
+      // For now, use the same conversion for all events
+      // In the future, you could store coordinate mapping parameters in the events table
+      const result: [number, number] = [
+        (realWorldPos[0] - baseLat) / scale,
+        (realWorldPos[1] - baseLng) / scale
+      ];
+      
+      console.log('Converted real world coordinates:', realWorldPos, 'to image:', result);
+      return result;
+    } catch (error) {
+      console.error('Error converting real world to image coordinates:', error);
+      return [0, 0]; // Return default image coordinates
+    }
+  };
+
+  // Create markers for custom map
+  const customMapMarkers = selectedEvent?.custom_map_url && Array.isArray(filteredPositions)
+    ? filteredPositions
+        .filter(position => 
+          typeof position.latitude === 'number' && 
+          typeof position.longitude === 'number' &&
+          !isNaN(position.latitude) && 
+          !isNaN(position.longitude)
+        )
+        .map(position => {
+          try {
+            // Determine position status
+            const ratio = position.filled / position.needed;
+            let status: 'filled' | 'partial' | 'needs' = 'needs';
+            if (ratio === 1) {
+              status = 'filled';
+            } else if (ratio > 0) {
+              status = 'partial';
+            }
+
+            return {
+              position: convertRealWorldToImage([position.latitude, position.longitude], selectedEventId || undefined),
+              popup: `${position.name} (${position.filled}/${position.needed})`,
+              isSelected: false,
+              status: status
+            };
+          } catch (error) {
+            console.error('Error converting position coordinates:', error);
+            return null;
+          }
+        })
+        .filter((marker): marker is { position: [number, number]; popup: string; isSelected: boolean; status: 'filled' | 'partial' | 'needs' } => marker !== null)
+    : [];
+
   const renderLiveUpdates = () => {
     const allUpdates = [
       ...(issues || []),
@@ -508,6 +575,7 @@ export function EventsOverviewPage() {
                 <div className="relative h-full">
                   <CustomMapView
                     imageUrl={selectedEvent.custom_map_url}
+                    markers={customMapMarkers}
                     className="h-full w-full"
                   />
                   {filteredPositions.length > 0 && (
@@ -527,6 +595,24 @@ export function EventsOverviewPage() {
                       </div>
                     </div>
                   )}
+                  {/* Legend for marker colors */}
+                  <div className="absolute bottom-4 left-4 bg-white bg-opacity-90 p-3 rounded-lg shadow-md">
+                    <h4 className="font-medium text-sm text-gray-900 mb-2">Legend:</h4>
+                    <div className="space-y-1">
+                      <div className="flex items-center text-xs text-gray-600">
+                        <div className="w-3 h-3 rounded-full bg-green-500 mr-2"></div>
+                        <span>Fully Staffed</span>
+                      </div>
+                      <div className="flex items-center text-xs text-gray-600">
+                        <div className="w-3 h-3 rounded-full bg-yellow-500 mr-2"></div>
+                        <span>Partially Staffed</span>
+                      </div>
+                      <div className="flex items-center text-xs text-gray-600">
+                        <div className="w-3 h-3 rounded-full bg-red-500 mr-2"></div>
+                        <span>Needs Volunteers</span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <MapContainer
