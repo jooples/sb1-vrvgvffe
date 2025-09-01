@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase';
 import { format, isValid, parseISO } from 'date-fns';
 import { useSearchParams } from 'react-router-dom';
 import { toast } from 'react-hot-toast';
+import { CustomMapView } from '../components/CustomMapView';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -22,6 +23,7 @@ interface Event {
   name: string;
   date: string;
   time: string;
+  custom_map_url?: string | null;
 }
 
 interface Position {
@@ -134,7 +136,7 @@ export function EventsOverviewPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('events')
-        .select('id, name, date, time')
+        .select('id, name, date, time, custom_map_url')
         .order('date', { ascending: true });
       
       if (error) throw error;
@@ -169,7 +171,10 @@ export function EventsOverviewPage() {
       
       const { data, error } = await query;
       if (error) throw error;
-      return data as Position[];
+      return (data as any[]).map(item => ({
+        ...item,
+        event: Array.isArray(item.event) ? item.event[0] : item.event
+      })) as Position[];
     },
   });
 
@@ -302,6 +307,11 @@ export function EventsOverviewPage() {
   const filteredPositions = selectedEventId
     ? positions.filter(p => p.event.id === selectedEventId)
     : positions;
+
+  // Get the selected event for custom map
+  const selectedEvent = selectedEventId && events 
+    ? events.find(e => e.id === selectedEventId) 
+    : null;
 
   const renderLiveUpdates = () => {
     const allUpdates = [
@@ -442,7 +452,7 @@ export function EventsOverviewPage() {
             className="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500"
           >
             <option value="">All Events</option>
-            {events.map((event) => (
+            {events?.map((event) => (
               <option key={event.id} value={event.id}>
                 {event.name} - {safeFormatDate(event.date, 'PP')}
               </option>
@@ -484,41 +494,75 @@ export function EventsOverviewPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="bg-white shadow rounded-lg overflow-hidden">
           <div className="p-6">
-            <h2 className="text-lg font-medium text-gray-900 mb-4">Position Locations</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-medium text-gray-900">Position Locations</h2>
+              {selectedEvent?.custom_map_url && (
+                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800">
+                  <MapPin className="h-3 w-3 mr-1" />
+                  Custom Map
+                </span>
+              )}
+            </div>
             <div className="h-[600px] rounded-lg overflow-hidden">
-              <MapContainer
-                center={[0, 0]}
-                zoom={2}
-                style={{ height: '100%', width: '100%' }}
-                ref={mapRef}
-              >
-                <MapUpdater positions={positions} selectedEventId={selectedEventId} />
-                <TileLayer
-                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-                />
-                {filteredPositions.map((position) => (
-                  <Marker
-                    key={position.id}
-                    position={[position.latitude, position.longitude]}
-                  >
-                    <Popup>
-                      <div className="p-2">
-                        <h3 className="font-medium">{position.name}</h3>
-                        <p className="text-sm text-gray-600">{position.event.name}</p>
-                        <p className="text-sm text-gray-600">
-                          {safeFormatDate(`${position.event.date} ${position.event.time}`, 'PPp')}
-                        </p>
-                        <p className={`text-sm ${
-                          position.filled >= position.needed ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {position.filled}/{position.needed} Volunteers
-                        </p>
+              {selectedEvent?.custom_map_url ? (
+                <div className="relative h-full">
+                  <CustomMapView
+                    imageUrl={selectedEvent.custom_map_url}
+                    className="h-full w-full"
+                  />
+                  {filteredPositions.length > 0 && (
+                    <div className="absolute top-4 right-4 bg-white bg-opacity-90 p-3 rounded-lg shadow-md">
+                      <h4 className="font-medium text-sm text-gray-900 mb-2">Positions on this map:</h4>
+                      <div className="space-y-1">
+                        {filteredPositions.map((position) => (
+                          <div key={position.id} className="text-xs text-gray-600">
+                            <span className="font-medium">{position.name}</span>
+                            <span className={`ml-2 ${
+                              position.filled >= position.needed ? 'text-green-600' : 'text-red-600'
+                            }`}>
+                              ({position.filled}/{position.needed})
+                            </span>
+                          </div>
+                        ))}
                       </div>
-                    </Popup>
-                  </Marker>
-                ))}
-              </MapContainer>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <MapContainer
+                  center={[0, 0]}
+                  zoom={2}
+                  style={{ height: '100%', width: '100%' }}
+                  ref={mapRef}
+                >
+                  <MapUpdater positions={positions} selectedEventId={selectedEventId} />
+                  <TileLayer
+                    url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+                    attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  />
+                  {filteredPositions.map((position) => (
+                    <Marker
+                      key={position.id}
+                      position={[position.latitude, position.longitude]}
+                    >
+                      <Popup>
+                        <div className="p-2">
+                          <h3 className="font-medium">{position.name}</h3>
+                          <p className="text-sm text-gray-600">{position.event.name}</p>
+                          <p className="text-sm text-gray-600">
+                            {safeFormatDate(`${position.event.date} ${position.event.time}`, 'PPp')}
+                          </p>
+                          <p className={`text-sm ${
+                            position.filled >= position.needed ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            {position.filled}/{position.needed} Volunteers
+                          </p>
+                        </div>
+                      </Popup>
+                    </Marker>
+                  ))}
+                </MapContainer>
+              )}
             </div>
           </div>
         </div>

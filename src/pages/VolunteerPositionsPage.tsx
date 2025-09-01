@@ -109,6 +109,7 @@ export function VolunteerPositionsPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selectedPosition, setSelectedPosition] = useState<[number, number] | null>(null);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [customMapSelectedPosition, setCustomMapSelectedPosition] = useState<[number, number] | null>(null);
   const mapRef = useRef<L.Map | null>(null);
 
   const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<PositionFormData>();
@@ -143,22 +144,6 @@ export function VolunteerPositionsPage() {
     }
   }, [selectedPosition, setValue]);
 
-  // Set form values when editing position
-  useEffect(() => {
-    if (editingPosition) {
-      setValue('event_id', editingPosition.event_id);
-      setValue('name', editingPosition.name);
-      setValue('needed', editingPosition.needed);
-      setValue('description', editingPosition.description || '');
-      setValue('skill_level', editingPosition.skill_level || '');
-      setValue('latitude', editingPosition.latitude);
-      setValue('longitude', editingPosition.longitude);
-      setSelectedPosition([editingPosition.latitude, editingPosition.longitude]);
-    } else {
-      setSelectedPosition(null);
-    }
-  }, [editingPosition, setValue]);
-
   const { data: events } = useQuery({
     queryKey: ['events'],
     queryFn: async () => {
@@ -177,7 +162,9 @@ export function VolunteerPositionsPage() {
     },
   });
 
-  const selectedEvent = events?.find(e => e.id === selectedEventId);
+  // Defensive: ensure events is always an array
+  const safeEvents = Array.isArray(events) ? events : [];
+  const selectedEvent = safeEvents.find(e => e.id === selectedEventId);
 
   const { data: positions, isLoading, error } = useQuery({
     queryKey: ['positions'],
@@ -199,6 +186,90 @@ export function VolunteerPositionsPage() {
       }
     },
   });
+
+  // Convert image coordinates to approximate real-world coordinates for custom maps
+  const convertImageToRealWorld = (imagePos: [number, number]): [number, number] => {
+    try {
+      // This is a simplified conversion - in a real app, you'd need proper coordinate mapping
+      // For now, we'll use a basic conversion that assumes the image represents a small area
+      const baseLat = 40.7128; // Example: New York City latitude
+      const baseLng = -74.0060; // Example: New York City longitude
+      const scale = 0.01; // Scale factor for conversion
+      
+      if (!Array.isArray(imagePos) || imagePos.length !== 2 || 
+          typeof imagePos[0] !== 'number' || typeof imagePos[1] !== 'number' ||
+          isNaN(imagePos[0]) || isNaN(imagePos[1])) {
+        throw new Error('Invalid image coordinates');
+      }
+      
+      const result: [number, number] = [
+        baseLat + (imagePos[0] * scale),
+        baseLng + (imagePos[1] * scale)
+      ];
+      
+      console.log('Converted image coordinates:', imagePos, 'to real world:', result);
+      return result;
+    } catch (error) {
+      console.error('Error converting image to real world coordinates:', error);
+      return [40.7128, -74.0060]; // Return default coordinates
+    }
+  };
+
+  // Convert real-world coordinates to approximate image coordinates for custom maps
+  const convertRealWorldToImage = (realWorldPos: [number, number]): [number, number] => {
+    try {
+      // Reverse of convertImageToRealWorld
+      const baseLat = 40.7128;
+      const baseLng = -74.0060;
+      const scale = 0.01;
+      
+      if (!Array.isArray(realWorldPos) || realWorldPos.length !== 2 || 
+          typeof realWorldPos[0] !== 'number' || typeof realWorldPos[1] !== 'number' ||
+          isNaN(realWorldPos[0]) || isNaN(realWorldPos[1])) {
+        throw new Error('Invalid real world coordinates');
+      }
+      
+      const result: [number, number] = [
+        (realWorldPos[0] - baseLat) / scale,
+        (realWorldPos[1] - baseLng) / scale
+      ];
+      
+      console.log('Converted real world coordinates:', realWorldPos, 'to image:', result);
+      return result;
+    } catch (error) {
+      console.error('Error converting real world to image coordinates:', error);
+      return [0, 0]; // Return default image coordinates
+    }
+  };
+
+  // Set form values when editing position
+  useEffect(() => {
+    if (editingPosition) {
+      setValue('event_id', editingPosition.event_id);
+      setValue('name', editingPosition.name);
+      setValue('needed', editingPosition.needed);
+      setValue('description', editingPosition.description || '');
+      setValue('skill_level', editingPosition.skill_level || '');
+      setValue('latitude', editingPosition.latitude);
+      setValue('longitude', editingPosition.longitude);
+      
+      // Set selected position for both custom and regular maps
+      setSelectedPosition([editingPosition.latitude, editingPosition.longitude]);
+      
+      // For custom maps, try to convert real-world coordinates to image coordinates
+      const event = safeEvents.find(e => e.id === editingPosition.event_id);
+      if (event?.custom_map_url) {
+        // Convert real-world coordinates to approximate image coordinates
+        const imagePos = convertRealWorldToImage([editingPosition.latitude, editingPosition.longitude]);
+        setCustomMapSelectedPosition(imagePos);
+      } else {
+        setCustomMapSelectedPosition(null);
+      }
+    } else {
+      setSelectedPosition(null);
+      setCustomMapSelectedPosition(null);
+    }
+  }, [editingPosition, setValue, safeEvents]);
 
   const createMutation = useMutation({
     mutationFn: async (data: PositionFormData) => {
@@ -224,6 +295,7 @@ export function VolunteerPositionsPage() {
       toast.success('Position created successfully');
       reset();
       setSelectedPosition(null);
+      setCustomMapSelectedPosition(null);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Failed to create position');
@@ -252,6 +324,7 @@ export function VolunteerPositionsPage() {
       setEditingPosition(null);
       reset();
       setSelectedPosition(null);
+      setCustomMapSelectedPosition(null);
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : 'Failed to update position');
@@ -315,16 +388,80 @@ export function VolunteerPositionsPage() {
     );
   }
 
-  const filteredPositions = selectedEventId
-    ? positions?.filter(p => p.event_id === selectedEventId)
-    : positions;
+  // Defensive: ensure positions is always an array
+  const filteredPositions = Array.isArray(positions)
+    ? (selectedEventId ? positions.filter(p => p.event_id === selectedEventId) : positions)
+    : [];
 
-  const markers = filteredPositions?.map(position => ({
-    position: [position.latitude, position.longitude] as [number, number],
-    popup: `${position.name} (${position.filled}/${position.needed})`
-  })) || [];
+  // Handle custom map click
+  const handleCustomMapClick = (imagePos: [number, number]) => {
+    try {
+      if (!Array.isArray(imagePos) || imagePos.length !== 2 || 
+          typeof imagePos[0] !== 'number' || typeof imagePos[1] !== 'number' ||
+          isNaN(imagePos[0]) || isNaN(imagePos[1])) {
+        console.error('Invalid image position received:', imagePos);
+        return;
+      }
+      
+      setCustomMapSelectedPosition(imagePos);
+      const realWorldPos = convertImageToRealWorld(imagePos);
+      setSelectedPosition(realWorldPos);
+    } catch (error) {
+      console.error('Error handling custom map click:', error);
+      toast.error('Error selecting position on map');
+    }
+  };
 
-  if (selectedPosition) {
+  // Clear custom map selection when switching events
+  useEffect(() => {
+    setCustomMapSelectedPosition(null);
+  }, [selectedEventId]);
+
+  // Create markers for custom map
+  const customMapMarkers = Array.isArray(filteredPositions)
+    ? filteredPositions
+        .filter(position => 
+          typeof position.latitude === 'number' && 
+          typeof position.longitude === 'number' &&
+          !isNaN(position.latitude) && 
+          !isNaN(position.longitude)
+        )
+        .map(position => {
+          try {
+            return {
+              position: convertRealWorldToImage([position.latitude, position.longitude]),
+              popup: `${position.name} (${position.filled}/${position.needed})`,
+              isSelected: false
+            };
+          } catch (error) {
+            console.error('Error converting position coordinates:', error);
+            return null;
+          }
+        })
+        .filter((marker): marker is { position: [number, number]; popup: string; isSelected: boolean } => marker !== null)
+    : [];
+
+  // Add selected position marker for custom map
+  if (customMapSelectedPosition && Array.isArray(customMapSelectedPosition) && customMapSelectedPosition.length === 2) {
+    try {
+      customMapMarkers.push({
+        position: customMapSelectedPosition,
+        popup: 'Selected Position',
+        isSelected: true
+      });
+    } catch (error) {
+      console.error('Error adding selected position marker:', error);
+    }
+  }
+
+  const markers = Array.isArray(filteredPositions)
+    ? filteredPositions.map(position => ({
+        position: [position.latitude, position.longitude] as [number, number],
+        popup: `${position.name} (${position.filled}/${position.needed})`
+      }))
+    : [];
+
+  if (selectedPosition && !selectedEvent?.custom_map_url) {
     markers.push({
       position: selectedPosition,
       popup: 'Selected Position'
@@ -343,12 +480,42 @@ export function VolunteerPositionsPage() {
           <label className="block text-sm font-medium text-gray-700 mb-2">Select Position on Map</label>
           <div className="h-[400px] rounded-lg overflow-hidden border border-gray-300">
             {selectedEvent?.custom_map_url ? (
-              <CustomMapView
-                imageUrl={selectedEvent.custom_map_url}
-                markers={markers}
-                onClick={(pos) => setSelectedPosition(pos)}
-                className="h-full w-full"
-              />
+              <div className="relative h-full">
+                <CustomMapView
+                  imageUrl={selectedEvent.custom_map_url}
+                  markers={customMapMarkers}
+                  onClick={(pos) => handleCustomMapClick(pos)}
+                  className="h-full w-full"
+                />
+                {Array.isArray(customMapSelectedPosition) && customMapSelectedPosition.length === 2 && (
+                  <div className="absolute top-4 right-4 bg-white bg-opacity-90 p-3 rounded-lg shadow-md">
+                    <h4 className="font-medium text-sm text-gray-900 mb-2">Selected Position:</h4>
+                    <div className="text-xs text-gray-600">
+                      <p>Image Coordinates: ({customMapSelectedPosition[0]?.toFixed(2)}, {customMapSelectedPosition[1]?.toFixed(2)})</p>
+                      {Array.isArray(selectedPosition) && selectedPosition.length === 2 && (
+                        <p>Real World: ({selectedPosition[0]?.toFixed(6)}, {selectedPosition[1]?.toFixed(6)})</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {Array.isArray(filteredPositions) && filteredPositions.length > 0 && (
+                  <div className="absolute top-4 left-4 bg-white bg-opacity-90 p-3 rounded-lg shadow-md max-h-48 overflow-y-auto">
+                    <h4 className="font-medium text-sm text-gray-900 mb-2">Existing Positions:</h4>
+                    <div className="space-y-1">
+                      {filteredPositions.map((position) => (
+                        <div key={position.id} className="text-xs text-gray-600">
+                          <span className="font-medium">{position.name}</span>
+                          <span className={`ml-2 ${
+                            position.filled >= position.needed ? 'text-green-600' : 'text-red-600'
+                          }`}>
+                            ({position.filled}/{position.needed})
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             ) : (
               <MapContainer
                 center={userLocation ? [userLocation.lat, userLocation.lng] : [0, 0]}
@@ -365,10 +532,10 @@ export function VolunteerPositionsPage() {
                   setPosition={setSelectedPosition}
                 />
                 <MapUpdater 
-                  positions={positions || []} 
+                  positions={Array.isArray(positions) ? positions : []} 
                   selectedEventId={selectedEventId}
                 />
-                {filteredPositions?.filter(p => !editingPosition || p.id !== editingPosition.id)
+                {Array.isArray(filteredPositions) && filteredPositions.filter(p => !editingPosition || p.id !== editingPosition.id)
                   .map((position) => (
                   <Marker
                     key={position.id}
@@ -397,7 +564,7 @@ export function VolunteerPositionsPage() {
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
             >
               <option value="">Select an event</option>
-              {events?.map((event) => (
+              {safeEvents.map((event) => (
                 <option key={event.id} value={event.id}>
                   {event.name} {event.custom_map_url ? '(Custom Map)' : ''}
                 </option>
@@ -506,6 +673,7 @@ export function VolunteerPositionsPage() {
                   setEditingPosition(null);
                   reset();
                   setSelectedPosition(null);
+                  setCustomMapSelectedPosition(null);
                 }}
                 className="px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 disabled={isSubmitting}
