@@ -5,6 +5,7 @@ import { toast } from 'react-hot-toast';
 import { Users, Edit2, Trash2, CheckCircle, XCircle, Search, Filter } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useAutoCheckout } from '../hooks/useAutoCheckout';
 
 interface Volunteer {
   id: string;
@@ -116,6 +117,15 @@ export function AssignVolunteersPage() {
     },
   });
 
+  // Set up automatic check-out for volunteers whose shifts have ended
+  useAutoCheckout({
+    volunteers: volunteers || [],
+    enabled: true,
+    checkInterval: 60000, // Check every minute
+    bufferMinutes: 1, // 1 minute buffer after shift ends
+    maxLateCheckoutWindow: 5 // Only check out within 5 minutes of shift end
+  });
+
   // Filter volunteers based on search and filter criteria
   const filteredVolunteers = useMemo(() => {
     if (!volunteers) return [];
@@ -203,15 +213,9 @@ export function AssignVolunteersPage() {
         
         if (signupError) throw signupError;
 
-        // Increment the filled count for the position
-        const { error: incrementError } = await supabase
-          .rpc('increment_filled_count', { position_id: data.position_id });
-          
-        if (incrementError) {
-          console.error('Error incrementing filled count:', incrementError);
-          // Don't throw error for RPC function failure, just log it
-          console.warn('Continuing despite RPC function failure');
-        }
+        // Note: We don't increment the filled count here because the volunteer
+        // is only assigned, not checked in. The filled count should only reflect
+        // volunteers who have actually arrived (arrived = true).
 
         return signup;
       } catch (error) {
@@ -242,9 +246,9 @@ export function AssignVolunteersPage() {
       setIsSubmitting(true);
       console.log('Updating volunteer with data:', data);
       try {
-        // If position_id is changing, we need to update the filled counts
-        if (data.position_id && editingVolunteer && data.position_id !== editingVolunteer.position_id) {
-          // Decrement the old position's filled count
+        // If position_id is changing and the volunteer is checked in, we need to update the filled counts
+        if (data.position_id && editingVolunteer && data.position_id !== editingVolunteer.position_id && editingVolunteer.arrived) {
+          // Decrement the old position's filled count (only if volunteer was checked in)
           const { error: decrementError } = await supabase
             .rpc('decrement_filled_count', { position_id: editingVolunteer.position_id });
           
@@ -253,7 +257,7 @@ export function AssignVolunteersPage() {
             console.warn('Continuing despite RPC function failure');
           }
 
-          // Increment the new position's filled count
+          // Increment the new position's filled count (only if volunteer is checked in)
           const { error: incrementError } = await supabase
             .rpc('increment_filled_count', { position_id: data.position_id });
           
@@ -297,7 +301,7 @@ export function AssignVolunteersPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async ({ id, position_id }: { id: string; position_id: string }) => {
+    mutationFn: async ({ id, position_id, arrived }: { id: string; position_id: string; arrived: boolean }) => {
       try {
         const { error: deleteError } = await supabase
           .from('volunteer_signups')
@@ -306,13 +310,15 @@ export function AssignVolunteersPage() {
         
         if (deleteError) throw deleteError;
 
-        // Decrement the filled count for the position
-        const { error: decrementError } = await supabase
-          .rpc('decrement_filled_count', { position_id });
-          
-        if (decrementError) {
-          console.error('Error decrementing filled count:', decrementError);
-          console.warn('Continuing despite RPC function failure');
+        // Decrement the filled count for the position only if the volunteer was checked in
+        if (arrived) {
+          const { error: decrementError } = await supabase
+            .rpc('decrement_filled_count', { position_id });
+            
+          if (decrementError) {
+            console.error('Error decrementing filled count:', decrementError);
+            console.warn('Continuing despite RPC function failure');
+          }
         }
       } catch (error) {
         console.error('Error deleting volunteer:', error);
@@ -699,7 +705,8 @@ export function AssignVolunteersPage() {
                         if (window.confirm('Are you sure you want to remove this volunteer?')) {
                           deleteMutation.mutate({ 
                             id: volunteer.id, 
-                            position_id: volunteer.position_id 
+                            position_id: volunteer.position_id,
+                            arrived: volunteer.arrived
                           });
                         }
                       }}

@@ -51,7 +51,7 @@ function MapMarker({ position, setPosition }: {
   position: [number, number] | null;
   setPosition: (pos: [number, number]) => void;
 }) {
-  const map = useMapEvents({
+  useMapEvents({
     click(e) {
       setPosition([e.latlng.lat, e.latlng.lng]);
     },
@@ -113,8 +113,46 @@ export function VolunteerPositionsPage() {
   const mapRef = useRef<L.Map | null>(null);
 
   const { register, handleSubmit, reset, setValue, watch, formState: { errors } } = useForm<PositionFormData>();
-  const formValues = watch();
   const selectedEventId = watch('event_id');
+
+  const { data: events } = useQuery({
+    queryKey: ['events'],
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase
+          .from('events')
+          .select('id, name, custom_map_url')
+          .eq('user_id', user?.id)
+          .order('date', { ascending: true });
+        if (error) throw error;
+        return data as Event[];
+      } catch (error) {
+        console.error('Error fetching events:', error);
+        throw error;
+      }
+    },
+  });
+
+  const { data: positions, isLoading, error } = useQuery({
+    queryKey: ['positions'],
+    queryFn: async () => {
+      try {
+        const { data, error } = await supabase
+          .from('volunteer_positions')
+          .select(`
+            *,
+            event:events(name)
+          `)
+          .eq('user_id', user?.id)
+          .order('created_at', { ascending: false });
+        if (error) throw error;
+        return data;
+      } catch (error) {
+        console.error('Error fetching positions:', error);
+        throw error;
+      }
+    },
+  });
 
   // Get user's location
   useEffect(() => {
@@ -144,48 +182,9 @@ export function VolunteerPositionsPage() {
     }
   }, [selectedPosition, setValue]);
 
-  const { data: events } = useQuery({
-    queryKey: ['events'],
-    queryFn: async () => {
-      try {
-        const { data, error } = await supabase
-          .from('events')
-          .select('id, name, custom_map_url')
-          .eq('user_id', user?.id)
-          .order('date', { ascending: true });
-        if (error) throw error;
-        return data as Event[];
-      } catch (error) {
-        console.error('Error fetching events:', error);
-        throw error;
-      }
-    },
-  });
-
   // Defensive: ensure events is always an array
   const safeEvents = Array.isArray(events) ? events : [];
   const selectedEvent = safeEvents.find(e => e.id === selectedEventId);
-
-  const { data: positions, isLoading, error } = useQuery({
-    queryKey: ['positions'],
-    queryFn: async () => {
-      try {
-        const { data, error } = await supabase
-          .from('volunteer_positions')
-          .select(`
-            *,
-            event:events(name)
-          `)
-          .eq('user_id', user?.id)
-          .order('created_at', { ascending: false });
-        if (error) throw error;
-        return data;
-      } catch (error) {
-        console.error('Error fetching positions:', error);
-        throw error;
-      }
-    },
-  });
 
   // Convert image coordinates to approximate real-world coordinates for custom maps
   const convertImageToRealWorld = (imagePos: [number, number]): [number, number] => {
@@ -366,6 +365,12 @@ export function VolunteerPositionsPage() {
     }
   };
 
+  // Clear custom map selection when switching events
+  useEffect(() => {
+    setCustomMapSelectedPosition(null);
+  }, [selectedEventId]);
+
+  // Early returns after all hooks are called
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -411,11 +416,6 @@ export function VolunteerPositionsPage() {
       toast.error('Error selecting position on map');
     }
   };
-
-  // Clear custom map selection when switching events
-  useEffect(() => {
-    setCustomMapSelectedPosition(null);
-  }, [selectedEventId]);
 
   // Create markers for custom map
   const customMapMarkers = Array.isArray(filteredPositions)

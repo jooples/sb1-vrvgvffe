@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'react-hot-toast';
-import { CheckCircle, AlertCircle, Info, MapPin, X } from 'lucide-react';
+import { CheckCircle, AlertCircle, Info, MapPin, X, Clock, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAutoCheckout } from '../hooks/useAutoCheckout';
 
 interface Volunteer {
   id: string;
+  position_id: string;
   volunteer_name: string;
   phone_number: string;
   start_time: string;
@@ -229,6 +231,109 @@ function ConfirmationPopup({
   );
 }
 
+interface TimeWarningPopupProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  volunteer: Volunteer | null;
+  isCheckIn: boolean;
+  isLoading: boolean;
+  timeStatus: {
+    status: string;
+    message: string;
+    color: string;
+  } | null;
+}
+
+function TimeWarningPopup({ 
+  isOpen, 
+  onClose, 
+  onConfirm, 
+  volunteer, 
+  isCheckIn, 
+  isLoading,
+  timeStatus
+}: TimeWarningPopupProps) {
+  if (!isOpen || !volunteer || !timeStatus) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center">
+            <AlertTriangle className="h-6 w-6 text-orange-500 mr-2" />
+            <h3 className="text-lg font-semibold text-gray-900">
+              Time Warning
+            </h3>
+          </div>
+          <button
+            onClick={onClose}
+            disabled={isLoading}
+            className="text-gray-400 hover:text-gray-600 disabled:opacity-50"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+        
+        <div className="space-y-4 mb-6">
+          <div className="bg-orange-50 border border-orange-200 rounded-md p-4">
+            <div className="flex items-center">
+              <Clock className="h-5 w-5 text-orange-500 mr-2" />
+              <div>
+                <p className="text-sm font-medium text-orange-800">
+                  {timeStatus.status === 'early' ? 'Checking in early' : 'Checking in late'}
+                </p>
+                <p className={`text-sm ${timeStatus.color}`}>
+                  {timeStatus.message}
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <p className="text-sm font-medium text-gray-500">Volunteer</p>
+            <p className="text-base text-gray-900">{volunteer.volunteer_name}</p>
+          </div>
+          
+          <div>
+            <p className="text-sm font-medium text-gray-500">Scheduled Shift</p>
+            <p className="text-base text-gray-900">
+              {volunteer.start_time} - {volunteer.end_time}
+            </p>
+          </div>
+          
+          <div className="bg-blue-50 border border-blue-200 rounded-md p-3">
+            <p className="text-sm text-blue-800">
+              <strong>Note:</strong> You can still check in, but please confirm that this is intentional.
+            </p>
+          </div>
+        </div>
+        
+        <div className="flex space-x-3">
+          <button
+            onClick={onClose}
+            disabled={isLoading}
+            className="flex-1 px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 border border-gray-300 rounded-md hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            disabled={isLoading}
+            className={`flex-1 px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 ${
+              isCheckIn
+                ? 'bg-orange-600 hover:bg-orange-700 focus:ring-orange-500'
+                : 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+            }`}
+          >
+            {isLoading ? 'Processing...' : `Confirm ${isCheckIn ? 'Check-In' : 'Check-Out'}`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function CheckInPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -245,6 +350,21 @@ export function CheckInPage() {
     isOpen: false,
     volunteer: null,
     isCheckIn: true
+  });
+  const [timeWarningPopup, setTimeWarningPopup] = useState<{
+    isOpen: boolean;
+    volunteer: Volunteer | null;
+    isCheckIn: boolean;
+    timeStatus: {
+      status: string;
+      message: string;
+      color: string;
+    } | null;
+  }>({
+    isOpen: false,
+    volunteer: null,
+    isCheckIn: true,
+    timeStatus: null
   });
   const [debugInfo, setDebugInfo] = useState<{
     positionId: string | null;
@@ -428,6 +548,15 @@ export function CheckInPage() {
     staleTime: 1000 * 60,
   });
 
+  // Set up automatic check-out for volunteers whose shifts have ended
+  useAutoCheckout({
+    volunteers: volunteers || [],
+    enabled: true,
+    checkInterval: 60000, // Check every minute
+    bufferMinutes: 1, // 1 minute buffer after shift ends
+    maxLateCheckoutWindow: 5 // Only check out within 5 minutes of shift end
+  });
+
   const checkInMutation = useMutation({
     mutationFn: async ({ volunteerId, arrived }: { volunteerId: string; arrived: boolean }) => {
       console.log(`${arrived ? 'Checking in' : 'Checking out'} volunteer with ID:`, volunteerId);
@@ -489,11 +618,26 @@ export function CheckInPage() {
   });
 
   const handleCheckInClick = (volunteer: Volunteer) => {
-    setConfirmationPopup({
-      isOpen: true,
-      volunteer,
-      isCheckIn: !volunteer.arrived
-    });
+    const isCheckIn = !volunteer.arrived;
+    const timeStatus = getTimeStatus(volunteer);
+    const isWithinTime = isWithinShiftTime(volunteer);
+    
+    // If checking in and not within shift time, show time warning first
+    if (isCheckIn && !isWithinTime) {
+      setTimeWarningPopup({
+        isOpen: true,
+        volunteer,
+        isCheckIn,
+        timeStatus
+      });
+    } else {
+      // Show regular confirmation popup
+      setConfirmationPopup({
+        isOpen: true,
+        volunteer,
+        isCheckIn
+      });
+    }
   };
 
   const handleConfirmCheckIn = () => {
@@ -509,6 +653,22 @@ export function CheckInPage() {
     setConfirmationPopup({ isOpen: false, volunteer: null, isCheckIn: true });
   };
 
+  const handleConfirmTimeWarning = () => {
+    if (timeWarningPopup.volunteer) {
+      // Close time warning and show regular confirmation
+      setTimeWarningPopup({ isOpen: false, volunteer: null, isCheckIn: true, timeStatus: null });
+      setConfirmationPopup({
+        isOpen: true,
+        volunteer: timeWarningPopup.volunteer,
+        isCheckIn: timeWarningPopup.isCheckIn
+      });
+    }
+  };
+
+  const handleCloseTimeWarning = () => {
+    setTimeWarningPopup({ isOpen: false, volunteer: null, isCheckIn: true, timeStatus: null });
+  };
+
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371e3;
     const φ1 = lat1 * Math.PI/180;
@@ -522,6 +682,57 @@ export function CheckInPage() {
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
     return R * c;
+  };
+
+  const isWithinShiftTime = (volunteer: Volunteer) => {
+    const now = new Date();
+    const currentTime = now.getHours() * 60 + now.getMinutes(); // Convert to minutes since midnight
+    
+    // Parse start and end times
+    const [startHour, startMin] = volunteer.start_time.split(':').map(Number);
+    const [endHour, endMin] = volunteer.end_time.split(':').map(Number);
+    
+    const startTime = startHour * 60 + startMin;
+    const endTime = endHour * 60 + endMin;
+    
+    return currentTime >= startTime && currentTime <= endTime;
+  };
+
+  const getTimeStatus = (volunteer: Volunteer) => {
+    const now = new Date();
+    const currentTime = now.getHours() * 60 + now.getMinutes();
+    
+    const [startHour, startMin] = volunteer.start_time.split(':').map(Number);
+    const [endHour, endMin] = volunteer.end_time.split(':').map(Number);
+    
+    const startTime = startHour * 60 + startMin;
+    const endTime = endHour * 60 + endMin;
+    
+    if (currentTime < startTime) {
+      const minutesUntilStart = startTime - currentTime;
+      const hours = Math.floor(minutesUntilStart / 60);
+      const minutes = minutesUntilStart % 60;
+      return {
+        status: 'early',
+        message: `Shift starts in ${hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`}`,
+        color: 'text-orange-600'
+      };
+    } else if (currentTime > endTime) {
+      const minutesAfterEnd = currentTime - endTime;
+      const hours = Math.floor(minutesAfterEnd / 60);
+      const minutes = minutesAfterEnd % 60;
+      return {
+        status: 'late',
+        message: `Shift ended ${hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`} ago`,
+        color: 'text-red-600'
+      };
+    } else {
+      return {
+        status: 'ontime',
+        message: 'Within shift time',
+        color: 'text-green-600'
+      };
+    }
   };
 
   const isNearPosition = () => {
@@ -672,35 +883,61 @@ export function CheckInPage() {
                   Select a volunteer to toggle check-in status
                 </label>
                 <div className="space-y-2">
-                  {volunteers.map((volunteer) => (
-                    <div key={volunteer.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
-                      <div className="flex-1">
-                        <div className="flex items-center">
-                          <div className={`w-3 h-3 rounded-full mr-3 ${volunteer.arrived ? 'bg-green-500' : 'bg-gray-300'}`}></div>
-                          <div>
-                            <p className="text-sm font-medium text-gray-900">
-                              {volunteer.volunteer_name}
-                              {volunteer.organization && ` - ${volunteer.organization}`}
-                            </p>
-                            <p className="text-xs text-gray-500">
-                              {volunteer.start_time} - {volunteer.end_time}
-                            </p>
+                  {volunteers.map((volunteer) => {
+                    const timeStatus = getTimeStatus(volunteer);
+                    const isWithinTime = isWithinShiftTime(volunteer);
+                    
+                    return (
+                      <div key={volunteer.id} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
+                        <div className="flex-1">
+                          <div className="flex items-center">
+                            <div className={`w-3 h-3 rounded-full mr-3 ${volunteer.arrived ? 'bg-green-500' : 'bg-gray-300'}`}></div>
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between">
+                                <p className="text-sm font-medium text-gray-900">
+                                  {volunteer.volunteer_name}
+                                  {volunteer.organization && ` - ${volunteer.organization}`}
+                                </p>
+                                {!volunteer.arrived && !isWithinTime && (
+                                  <div className="flex items-center ml-2">
+                                    {timeStatus.status === 'early' ? (
+                                      <Clock className="h-4 w-4 text-orange-500 mr-1" />
+                                    ) : (
+                                      <AlertTriangle className="h-4 w-4 text-red-500 mr-1" />
+                                    )}
+                                    <span className={`text-xs ${timeStatus.color}`}>
+                                      {timeStatus.status === 'early' ? 'Early' : 'Late'}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500">
+                                {volunteer.start_time} - {volunteer.end_time}
+                              </p>
+                              {!volunteer.arrived && !isWithinTime && (
+                                <p className={`text-xs ${timeStatus.color} mt-1`}>
+                                  {timeStatus.message}
+                                </p>
+                              )}
+                            </div>
                           </div>
                         </div>
+                        <button
+                          onClick={() => handleCheckInClick(volunteer)}
+                          disabled={isLoading}
+                          className={`px-3 py-1 text-xs font-medium rounded-md ${
+                            volunteer.arrived
+                              ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                              : isWithinTime
+                                ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                                : 'bg-orange-100 text-orange-700 hover:bg-orange-200'
+                          } disabled:opacity-50 disabled:cursor-not-allowed`}
+                        >
+                          {isLoading ? 'Processing...' : (volunteer.arrived ? 'Check Out' : 'Check In')}
+                        </button>
                       </div>
-                      <button
-                        onClick={() => handleCheckInClick(volunteer)}
-                        disabled={isLoading}
-                        className={`px-3 py-1 text-xs font-medium rounded-md ${
-                          volunteer.arrived
-                            ? 'bg-red-100 text-red-700 hover:bg-red-200'
-                            : 'bg-green-100 text-green-700 hover:bg-green-200'
-                        } disabled:opacity-50 disabled:cursor-not-allowed`}
-                      >
-                        {isLoading ? 'Processing...' : (volunteer.arrived ? 'Check Out' : 'Check In')}
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ) : (
@@ -730,6 +967,16 @@ export function CheckInPage() {
           volunteer={confirmationPopup.volunteer}
           isCheckIn={confirmationPopup.isCheckIn}
           isLoading={isLoading}
+        />
+        
+        <TimeWarningPopup
+          isOpen={timeWarningPopup.isOpen}
+          onClose={handleCloseTimeWarning}
+          onConfirm={handleConfirmTimeWarning}
+          volunteer={timeWarningPopup.volunteer}
+          isCheckIn={timeWarningPopup.isCheckIn}
+          isLoading={isLoading}
+          timeStatus={timeWarningPopup.timeStatus}
         />
       </div>
     </div>

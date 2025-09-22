@@ -16,6 +16,7 @@ import {
   Clock
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import { useAutoCheckout } from '../hooks/useAutoCheckout';
 import 'leaflet/dist/leaflet.css';
 import L from 'leaflet';
 
@@ -118,6 +119,15 @@ export function EventOverviewPage() {
       return data as Volunteer[];
     },
     enabled: !!positions && positions.length > 0,
+  });
+
+  // Set up automatic check-out for volunteers whose shifts have ended
+  useAutoCheckout({
+    volunteers: volunteers || [],
+    enabled: true,
+    checkInterval: 60000, // Check every minute
+    bufferMinutes: 1, // 1 minute buffer after shift ends
+    maxLateCheckoutWindow: 5 // Only check out within 5 minutes of shift end
   });
 
   // Calculate map center based on position coordinates
