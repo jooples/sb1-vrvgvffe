@@ -54,6 +54,8 @@ interface Volunteer {
   start_time: string;
   end_time: string;
   arrived: boolean;
+  other_notes: string | null;
+  organization: string | null;
 }
 
 type PositionStatus = 'all' | 'filled' | 'partial' | 'needs';
@@ -339,10 +341,20 @@ export function EventOverviewPage() {
                         {getVolunteersForPosition(position.id).map((volunteer) => (
                           <div key={volunteer.id} className="flex items-center justify-between py-2">
                             <div>
-                              <p className="text-sm font-medium text-gray-900">{volunteer.volunteer_name}</p>
+                              <p className="text-sm font-medium text-gray-900">
+                                {volunteer.volunteer_name}
+                                {volunteer.organization && (
+                                  <span className="text-gray-500 font-normal"> - {volunteer.organization}</span>
+                                )}
+                              </p>
                               <p className="text-xs text-gray-500">
                                 {volunteer.start_time} - {volunteer.end_time}
                               </p>
+                              {volunteer.other_notes && (
+                                <p className="text-xs text-gray-500 italic">
+                                  Notes: {volunteer.other_notes}
+                                </p>
+                              )}
                             </div>
                             <div className="flex items-center space-x-2">
                               <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs ${

@@ -91,6 +91,8 @@ export interface Database {
           start_time: string
           end_time: string
           arrived: boolean
+          other_notes: string | null
+          organization: string | null
           created_at: string
         }
         Insert: {
@@ -101,6 +103,8 @@ export interface Database {
           start_time: string
           end_time: string
           arrived?: boolean
+          other_notes?: string | null
+          organization?: string | null
           created_at?: string
         }
         Update: {
@@ -111,6 +115,8 @@ export interface Database {
           start_time?: string
           end_time?: string
           arrived?: boolean
+          other_notes?: string | null
+          organization?: string | null
           created_at?: string
         }
       }

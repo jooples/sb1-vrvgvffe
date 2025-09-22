@@ -617,16 +617,12 @@ export function VolunteerPositionsPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700">Skill Level (Optional)</label>
-            <select
+            <input
+              type="text"
               {...register('skill_level')}
+              placeholder="Enter skill level requirements"
               className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-            >
-              <option value="">Select skill level</option>
-              <option value="Beginner">Beginner</option>
-              <option value="Intermediate">Intermediate</option>
-              <option value="Advanced">Advanced</option>
-              <option value="Expert">Expert</option>
-            </select>
+            />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -699,62 +695,102 @@ export function VolunteerPositionsPage() {
           </h3>
         </div>
         <div className="border-t border-gray-200">
-          <ul className="divide-y divide-gray-200">
-            {positions?.map((position) => (
-              <li key={position.id} className="px-4 py-4 sm:px-6">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    <MapPin className="h-5 w-5 text-gray-400 mr-3" />
-                    <div>
-                      <p className="text-sm font-medium text-indigo-600">{position.name}</p>
-                      <p className="text-sm text-gray-500">{position.event.name}</p>
-                      <p className="text-sm text-gray-500">
-                        Volunteers: {position.filled}/{position.needed}
-                      </p>
-                      {position.description && (
-                        <p className="text-sm text-gray-500">{position.description}</p>
-                      )}
-                      {position.skill_level && (
-                        <p className="text-sm text-gray-500">Skill Level: {position.skill_level}</p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex space-x-3">
-                    <button
-                      onClick={() => setShowQRCode(position.id)}
-                      className="text-gray-400 hover:text-gray-500"
-                      title="Generate QR Code"
-                    >
-                      <QrCode className="h-5 w-5" />
-                    </button>
-                    <button
-                      onClick={() => setEditingPosition(position)}
-                      className="text-gray-400 hover:text-gray-500"
-                      title="Edit position"
-                    >
-                      <Edit2 className="h-5 w-5" />
-                    </button>
-                    <button
-                      onClick={() => {
-                        if (window.confirm('Are you sure you want to delete this position?')) {
-                          deleteMutation.mutate(position.id);
-                        }
-                      }}
-                      className="text-gray-400 hover:text-gray-500"
-                      title="Delete position"
-                    >
-                      <Trash2 className="h-5 w-5" />
-                    </button>
-                  </div>
+          {(() => {
+            // Group positions by event
+            const positionsByEvent = Array.isArray(positions) 
+              ? positions.reduce((acc, position) => {
+                  const eventName = position.event?.name || 'Unknown Event';
+                  if (!acc[eventName]) {
+                    acc[eventName] = [];
+                  }
+                  acc[eventName].push(position);
+                  return acc;
+                }, {} as Record<string, typeof positions>)
+              : {};
+
+            // Sort events alphabetically
+            const sortedEvents = Object.keys(positionsByEvent).sort();
+
+            if (sortedEvents.length === 0) {
+              return (
+                <div className="px-4 py-4 sm:px-6 text-center text-gray-500">
+                  No positions found. Create one above!
                 </div>
-              </li>
-            ))}
-            {positions?.length === 0 && (
-              <li className="px-4 py-4 sm:px-6 text-center text-gray-500">
-                No positions found. Create one above!
-              </li>
-            )}
-          </ul>
+              );
+            }
+
+            return sortedEvents.map((eventName, eventIndex) => {
+              const eventPositions = positionsByEvent[eventName];
+              // Sort positions within each event by name
+              const sortedPositions = eventPositions.sort((a: Position, b: Position) => a.name.localeCompare(b.name));
+
+              return (
+                <div key={eventName} className={eventIndex > 0 ? 'border-t border-gray-200' : ''}>
+                  {/* Event Header */}
+                  <div className="bg-gray-50 px-4 py-3 sm:px-6">
+                    <h4 className="text-md font-medium text-gray-900 flex items-center">
+                      <MapPin className="h-4 w-4 text-gray-500 mr-2" />
+                      {eventName}
+                      <span className="ml-2 text-sm font-normal text-gray-500">
+                        ({eventPositions.length} position{eventPositions.length !== 1 ? 's' : ''})
+                      </span>
+                    </h4>
+                  </div>
+                  
+                  {/* Positions for this event */}
+                  <ul className="divide-y divide-gray-200">
+                    {sortedPositions.map((position: Position) => (
+                      <li key={position.id} className="px-4 py-4 sm:px-6">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center">
+                            <div className="ml-6">
+                              <p className="text-sm font-medium text-indigo-600">{position.name}</p>
+                              <p className="text-sm text-gray-500">
+                                Volunteers: {position.filled}/{position.needed}
+                              </p>
+                              {position.description && (
+                                <p className="text-sm text-gray-500">{position.description}</p>
+                              )}
+                              {position.skill_level && (
+                                <p className="text-sm text-gray-500">Skill Level: {position.skill_level}</p>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex space-x-3">
+                            <button
+                              onClick={() => setShowQRCode(position.id)}
+                              className="text-gray-400 hover:text-gray-500"
+                              title="Generate QR Code"
+                            >
+                              <QrCode className="h-5 w-5" />
+                            </button>
+                            <button
+                              onClick={() => setEditingPosition(position)}
+                              className="text-gray-400 hover:text-gray-500"
+                              title="Edit position"
+                            >
+                              <Edit2 className="h-5 w-5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (window.confirm('Are you sure you want to delete this position?')) {
+                                  deleteMutation.mutate(position.id);
+                                }
+                              }}
+                              className="text-gray-400 hover:text-gray-500"
+                              title="Delete position"
+                            >
+                              <Trash2 className="h-5 w-5" />
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            });
+          })()}
         </div>
       </div>
 
